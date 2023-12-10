@@ -4,12 +4,17 @@ import os
 from PIL import Image
 from models.dynamic_channel import set_uniform_channel_ratio, reset_generator
 import models
+import copy
 import time
+from matplotlib import pyplot as plt
+from tools.train_gan import finetune_prune
+
 
 import sys
 from PyQt5.QtWidgets import *
 from PyQt5.QtGui import *
 from PyQt5.QtCore import *
+from torch import nn
 
 # settings
 # for attributes to use, modify the load_assets() function
@@ -17,6 +22,197 @@ config = 'anycost-ffhq-config-f'
 assets_dir = 'assets/demo'
 n_style_to_change = 12
 device = 'cpu'
+
+def fine_grained_prune(tensor: torch.Tensor, sparsity : float) -> torch.Tensor:
+    """
+    magnitude-based pruning for single tensor
+    :param tensor: torch.(cuda.)Tensor, weight of conv/fc layer
+    :param sparsity: float, pruning sparsity
+        sparsity = #zeros / #elements = 1 - #nonzeros / #elements
+    :return:
+        torch.(cuda.)Tensor, mask for zeros
+    """
+    sparsity = min(max(0.0, sparsity), 1.0)
+    if sparsity == 1.0:
+        tensor.zero_()
+        return torch.zeros_like(tensor)
+    elif sparsity == 0.0:
+        return torch.ones_like(tensor)
+
+    num_elements = tensor.numel()
+
+    ##################### YOUR CODE STARTS HERE #####################
+    # Step 1: calculate the #zeros (please use round())
+    num_zeros = round(sparsity * num_elements)
+    # Step 2: calculate the importance of weight
+    importance = torch.abs(tensor)
+    # Step 3: calculate the pruning threshold
+    threshold,s = torch.kthvalue(importance.view(-1), num_zeros)
+    # Step 4: get binary mask (1 for nonzeros, 0 for zeros)
+    mask = torch.gt(importance, threshold)
+    ##################### YOUR CODE ENDS HERE #######################
+
+    # Step 5: apply mask to prune the tensor
+    tensor.mul_(mask)
+
+    return mask
+
+class FineGrainedPruner:
+    def __init__(self, model, sparsity_dict):
+        self.masks = FineGrainedPruner.prune(model, sparsity_dict)
+
+    @torch.no_grad()
+    def apply(self, model):
+        for name, param in model.named_parameters():
+            if name in self.masks:
+                param *= self.masks[name]
+
+    @staticmethod
+    @torch.no_grad()
+    def prune(model, sparsity_dict):
+        masks = dict()
+        for name, param in model.named_parameters():
+            if param.dim() > 1: # we only prune conv and fc weights
+                masks[name] = fine_grained_prune(param, sparsity_dict)
+        return masks
+
+def get_num_channels_to_keep(channels: int, prune_ratio: float) -> int:
+    """A function to calculate the number of layers to PRESERVE after pruning
+    Note that preserve_rate = 1. - prune_ratio
+    """
+    ##################### YOUR CODE STARTS HERE #####################
+    return int(round(channels * (1 - prune_ratio)))
+    ##################### YOUR CODE ENDS HERE #####################
+
+@torch.no_grad()
+def channel_prune(model: nn.Module,
+                  prune_ratio):
+    """Apply channel pruning to each of the conv layer in the backbone
+    Note that for prune_ratio, we can either provide a floating-point number,
+    indicating that we use a uniform pruning rate for all layers, or a list of
+    numbers to indicate per-layer pruning rate.
+    """
+    # sanity check of provided prune_ratio
+    assert isinstance(prune_ratio, (float, list))
+    n_conv = len([m for m in model.convs])
+    # note that for the ratios, it affects the previous conv output and next
+    # conv input, i.e., conv0 - ratio0 - conv1 - ratio1-...
+    if isinstance(prune_ratio, list):
+        assert len(prune_ratio) == n_conv - 1
+    else:  # convert float to list
+        prune_ratio = [prune_ratio] * (n_conv - 1)
+    # we prune the convs in the backbone with a uniform ratio
+    model = copy.deepcopy(model)  # prevent overwrite
+    # we only apply pruning to the backbone features
+    all_convs = [m.conv for m in model.convs]
+    # all_bns = [m for m in model.backbone if isinstance(m, nn.BatchNorm2d)]
+    # apply pruning. we naively keep the first k channels
+    # assert len(all_convs) == len(all_bns)
+    for i_ratio, p_ratio in enumerate(prune_ratio):
+        prev_conv = all_convs[i_ratio]
+        # prev_bn = all_bns[i_ratio]
+        next_conv = all_convs[i_ratio + 1]
+        original_channels = prev_conv.out_channel  # same as next_conv.in_channels
+        n_keep = get_num_channels_to_keep(original_channels, p_ratio)
+        # prune the output of the previous conv and bn
+        prev_conv.weight.set_(prev_conv.weight.detach()[:n_keep])
+        # prev_bn.weight.set_(prev_bn.weight.detach()[:n_keep])
+        # prev_bn.bias.set_(prev_bn.bias.detach()[:n_keep])
+        # prev_bn.running_mean.set_(prev_bn.running_mean.detach()[:n_keep])
+        # prev_bn.running_var.set_(prev_bn.running_var.detach()[:n_keep])
+
+        # prune the input of the next conv (hint: just one line of code)
+        ##################### YOUR CODE STARTS HERE #####################
+        next_conv.weight.set_(next_conv.weight.detach()[:, :n_keep])
+        ##################### YOUR CODE ENDS HERE #####################
+
+    return model
+
+from torch.nn import parameter
+from fast_pytorch_kmeans import KMeans
+from collections import namedtuple
+
+Codebook = namedtuple('Codebook', ['centroids', 'labels'])
+def k_means_quantize(fp32_tensor: torch.Tensor, bitwidth=4, codebook=None):
+    """
+    quantize tensor using k-means clustering
+    :param fp32_tensor:
+    :param bitwidth: [int] quantization bit width, default=4
+    :param codebook: [Codebook] (the cluster centroids, the cluster label tensor)
+    :return:
+        [Codebook = (centroids, labels)]
+            centroids: [torch.(cuda.)FloatTensor] the cluster centroids
+            labels: [torch.(cuda.)LongTensor] cluster label tensor
+    """
+    if codebook is None:
+        ############### YOUR CODE STARTS HERE ###############
+        # get number of clusters based on the quantization precision
+        # hint: one line of code
+        n_clusters = 2**bitwidth
+        ############### YOUR CODE ENDS HERE #################
+        # use k-means to get the quantization centroids
+        kmeans = KMeans(n_clusters=n_clusters, mode='euclidean', verbose=0)
+        labels = kmeans.fit_predict(fp32_tensor.view(-1, 1)).to(torch.long)
+        centroids = kmeans.centroids.to(torch.float).view(-1)
+        codebook = Codebook(centroids, labels)
+    ############### YOUR CODE STARTS HERE ###############
+    # decode the codebook into k-means quantized tensor for inference
+    # hint: one line of code
+    quantized_tensor = codebook.centroids[codebook.labels].view(fp32_tensor.size())
+
+    ############### YOUR CODE ENDS HERE #################
+    fp32_tensor.set_(quantized_tensor.view_as(fp32_tensor))
+    return codebook
+
+class KMeansQuantizer:
+    def __init__(self, model : nn.Module, bitwidth=4):
+        self.codebook = KMeansQuantizer.quantize(model, bitwidth)
+
+    @torch.no_grad()
+    def apply(self, model, update_centroids):
+        for name, param in model.named_parameters():
+            if name in self.codebook:
+                if update_centroids:
+                    update_codebook(param, codebook=self.codebook[name])
+                self.codebook[name] = k_means_quantize(
+                    param, codebook=self.codebook[name])
+
+    @staticmethod
+    @torch.no_grad()
+    def quantize(model: nn.Module, bitwidth=4):
+        codebook = dict()
+        if isinstance(bitwidth, dict):
+            for name, param in model.named_parameters():
+                if name in bitwidth:
+                    codebook[name] = k_means_quantize(param, bitwidth=bitwidth[name])
+        else:
+            for name, param in model.named_parameters():
+                if param.dim() > 1:
+                    codebook[name] = k_means_quantize(param, bitwidth=bitwidth)
+        return codebook
+
+
+def get_num_parameters(model: nn.Module, count_nonzero_only=False) -> int:
+    """
+    calculate the total number of parameters of model
+    :param count_nonzero_only: only count nonzero weights
+    """
+    num_counted_elements = 0
+    for param in model.parameters():
+        if count_nonzero_only:
+            num_counted_elements += param.count_nonzero()
+        else:
+            num_counted_elements += param.numel()
+    return num_counted_elements
+
+
+def get_model_size(model: nn.Module, data_width=32, count_nonzero_only=False) -> int:
+    """
+    calculate the model size in bits
+    :param data_width: #bits per element
+    :param count_nonzero_only: only count nonzero weights
+    """
+    return get_num_parameters(model, count_nonzero_only) * data_width
 
 
 class WorkerSignals(QObject):
@@ -188,6 +384,30 @@ class FaceEditor(QMainWindow):
 
         # build the generator
         self.generator = models.get_pretrained('generator', config).to(device)
+        print(get_model_size(self.generator, count_nonzero_only=True))
+        def plot_num_parameters_distribution(model):
+            num_parameters = dict()
+            for name, param in model.named_parameters():
+                if param.dim() > 1:
+                    num_parameters[name] = param.numel()
+            fig = plt.figure(figsize=(8, 6))
+            plt.grid(axis='y')
+            plt.bar(list(num_parameters.keys()), list(num_parameters.values()))
+            plt.title('#Parameter Distribution')
+            plt.ylabel('Number of Parameters')
+            plt.xticks(rotation=60)
+            plt.tight_layout()
+            plt.show()
+
+        plot_num_parameters_distribution(self.generator)
+        
+        pruner = FineGrainedPruner(self.generator, 0.2)
+        fine_grained_prune(5, callbacks=[lambda: pruner.apply(self.generator)])
+        # for name, param in self.generator.named_parameters():
+        #     print(name)
+        #channel_prune(self.generator, prune_ratio=0.8)
+        print(get_model_size(self.generator, count_nonzero_only=True))
+        # KMeansQuantizer(self.generator, 4)
         self.generator.eval()
         self.mean_latent = self.generator.mean_style(10000)
 

@@ -38,7 +38,7 @@ checkpoint_dir = 'checkpoint'
 best_fid = 1e9
 
 
-def train(epoch):
+def train(epoch, callbacks = None):
     generator.train()
     discriminator.train()
     g_ema.eval()
@@ -224,6 +224,9 @@ def train(epoch):
                     grid = utils.make_grid(sample, nrow=int(args.n_vis_sample ** 0.5), normalize=True,
                                            range=(-1, 1))
                     log_writer.add_image('images', grid, n_trained_images)
+            if callbacks is not None:
+                for callback in callbacks:
+                    callback()
 
 
 def validate(epoch):
@@ -520,3 +523,9 @@ if __name__ == "__main__":
     for i_epoch in range(resume_from_epoch, args.epochs):
         train(i_epoch)
         validate(i_epoch)
+
+def finetune_prune(epochs, callbacks=None):
+    for i_epoch in range(epochs):
+        train(i_epoch)
+        validate(i_epoch)
+
