@@ -19,5 +19,5 @@ dependencies:
     - lpips==0.1.3
     - torchprofile==0.0.2
     - pyqt5==5.15.2
-    - horovod==0.21.3
+    # - horovod
     - tensorboard==2.4.1

@@ -7,7 +7,7 @@ import models
 import copy
 import time
 from matplotlib import pyplot as plt
-from tools.train_gan import finetune_prune
+# from tools.train_gan import finetune_prune
 
 
 import sys
@@ -104,6 +104,7 @@ def channel_prune(model: nn.Module,
     # we prune the convs in the backbone with a uniform ratio
     model = copy.deepcopy(model)  # prevent overwrite
     # we only apply pruning to the backbone features
+    # all_convs = [m.conv for m in zip(model.convs, model.to_rgbs)]
     all_convs = [m.conv for m in model.convs]
     # all_bns = [m for m in model.backbone if isinstance(m, nn.BatchNorm2d)]
     # apply pruning. we naively keep the first k channels
@@ -401,13 +402,14 @@ class FaceEditor(QMainWindow):
 
         plot_num_parameters_distribution(self.generator)
         
-        pruner = FineGrainedPruner(self.generator, 0.2)
-        fine_grained_prune(5, callbacks=[lambda: pruner.apply(self.generator)])
+        #pruner = FineGrainedPruner(self.generator, 0.2)
+        # finetune_prune(5, callbacks=[lambda: pruner.apply(self.generator)])
         # for name, param in self.generator.named_parameters():
         #     print(name)
-        #channel_prune(self.generator, prune_ratio=0.8)
-        print(get_model_size(self.generator, count_nonzero_only=True))
+        self.generator = channel_prune(self.generator, prune_ratio=0.6)
         # KMeansQuantizer(self.generator, 4)
+        print(get_model_size(self.generator, count_nonzero_only=True))
+        
         self.generator.eval()
         self.mean_latent = self.generator.mean_style(10000)
 

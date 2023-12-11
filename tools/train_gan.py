@@ -305,6 +305,10 @@ def measure_fid():
     fid0 = hvd.broadcast(torch.tensor(fid_dict[args.resolution]).float(), root_rank=0, name='fid').item()
     return fid0  # only return the fid of the largest resolution
 
+def finetune_prune(epochs, callbacks=None):
+    for i_epoch in range(epochs):
+        train(i_epoch)
+        validate(i_epoch)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -524,8 +528,6 @@ if __name__ == "__main__":
         train(i_epoch)
         validate(i_epoch)
 
-def finetune_prune(epochs, callbacks=None):
-    for i_epoch in range(epochs):
-        train(i_epoch)
-        validate(i_epoch)
+    pruner = FineGrainedPruner(generator, 0.2)
+    finetune_prune(5, callbacks=[lambda: pruner.apply(generator)])
 
