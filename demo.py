@@ -72,8 +72,9 @@ class FineGrainedPruner:
     def prune(model, sparsity_dict):
         masks = dict()
         for name, param in model.named_parameters():
-            if param.dim() > 1: # we only prune conv and fc weights
-                masks[name] = fine_grained_prune(param, sparsity_dict)
+            if param.dim() > 1 and param.numel() > 10 and name in sparsity_dict.keys(): # we only prune conv and fc weights
+                print(name)
+                masks[name] = fine_grained_prune(param, sparsity_dict[name])
         return masks
 
 def get_num_channels_to_keep(channels: int, prune_ratio: float) -> int:
@@ -386,27 +387,48 @@ class FaceEditor(QMainWindow):
         # build the generator
         self.generator = models.get_pretrained('generator', config).to(device)
         print(get_model_size(self.generator, count_nonzero_only=True))
-        def plot_num_parameters_distribution(model):
-            num_parameters = dict()
-            for name, param in model.named_parameters():
-                if param.dim() > 1:
-                    num_parameters[name] = param.numel()
-            fig = plt.figure(figsize=(8, 6))
-            plt.grid(axis='y')
-            plt.bar(list(num_parameters.keys()), list(num_parameters.values()))
-            plt.title('#Parameter Distribution')
-            plt.ylabel('Number of Parameters')
-            plt.xticks(rotation=60)
-            plt.tight_layout()
-            plt.show()
+        sparsity_dict = {
+        'conv1.conv.weight': 0.2, 'conv1.conv.modulation.weight': 0,
+        'convs.0.conv.weight': 0.2, 'convs.0.conv.modulation.weight': 0,
+        'convs.1.conv.weight': 0.1, 'convs.1.conv.modulation.weight': 0,
+        'convs.2.conv.weight': 0.2, 'convs.2.conv.modulation.weight': 0,
+        'convs.3.conv.weight': 0.2, 'convs.3.conv.modulation.weight': 0,
+        'convs.4.conv.weight': 0.2, 'convs.4.conv.modulation.weight': 0,
+        'convs.5.conv.weight': 0.2, 'convs.5.conv.modulation.weight': 0,
+        'convs.6.conv.weight': 0.2, 'convs.6.conv.modulation.weight': 0,
+        'convs.7.conv.weight': 0.2, 'convs.7.conv.modulation.weight': 0,
+        'convs.8.conv.weight': 0.2, 'convs.8.conv.modulation.weight': 0,
+        'convs.9.conv.weight': 0.2, 'convs.9.conv.modulation.weight': 0,
+        'convs.10.conv.weight': 0.2, 'convs.10.conv.modulation.weight': 0,
+        'convs.11.conv.weight': 0.2, 'convs.11.conv.modulation.weight': 0,
+        'convs.12.conv.weight': 0.2, 'convs.12.conv.modulation.weight': 0,
+        'convs.13.conv.weight': 0.2, 'convs.13.conv.modulation.weight': 0,
+        'convs.14.conv.weight': 0.2, 'convs.14.conv.modulation.weight': 0,
+        'convs.15.conv.weight': 0.2, 'convs.15.conv.modulation.weight': 0,
+        }
 
-        plot_num_parameters_distribution(self.generator)
+
+        # def plot_num_parameters_distribution(model):
+        #     num_parameters = dict()
+        #     for name, param in model.named_parameters():
+        #         if param.dim() > 1:
+        #             num_parameters[name] = param.numel()
+        #     fig = plt.figure(figsize=(8, 6))
+        #     plt.grid(axis='y')
+        #     plt.bar(list(num_parameters.keys()), list(num_parameters.values()))
+        #     plt.title('#Parameter Distribution')
+        #     plt.ylabel('Number of Parameters')
+        #     plt.xticks(rotation=60)
+        #     plt.tight_layout()
+        #     plt.show()
+
+        # plot_num_parameters_distribution(self.generator)
         
-        #pruner = FineGrainedPruner(self.generator, 0.2)
+        pruner = FineGrainedPruner(self.generator, sparsity_dict)
         # finetune_prune(5, callbacks=[lambda: pruner.apply(self.generator)])
         # for name, param in self.generator.named_parameters():
         #     print(name)
-        self.generator = channel_prune(self.generator, prune_ratio=0.6)
+        #self.generator = channel_prune(self.generator, prune_ratio=0.6)
         # KMeansQuantizer(self.generator, 4)
         print(get_model_size(self.generator, count_nonzero_only=True))
         
