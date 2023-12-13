@@ -233,7 +233,7 @@ class ModulatedConv2d(nn.Module):
         # process weight for dynamic channel
         first_k_oup = self.first_k_oup if hasattr(self, 'first_k_oup') and self.first_k_oup is not None \
             else self.weight.shape[1]
-        # assert first_k_oup <= self.weight.shape[1]
+        #assert first_k_oup <= self.weight.shape[1]
 
         weight = self.weight
         weight = weight[:, :first_k_oup, :in_channel].contiguous()  # index sub channels fro inference

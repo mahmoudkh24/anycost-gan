@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtGui import *
 from PyQt5.QtCore import *
 from torch import nn
+from models.ops import StyledConv, EqualLinear, ModulatedConv2d, ToRGB, ConvLayer, ResBlock, EqualConv2d
 
 # settings
 # for attributes to use, modify the load_assets() function
@@ -388,30 +389,30 @@ class FaceEditor(QMainWindow):
         self.generator = models.get_pretrained('generator', config).to(device)
         print(get_model_size(self.generator, count_nonzero_only=True))
         sparsity_dict = {
-        'conv1.conv.weight': 0.2, 'conv1.conv.modulation.weight': 0,
-        'convs.0.conv.weight': 0.2, 'convs.0.conv.modulation.weight': 0,
-        'convs.1.conv.weight': 0.1, 'convs.1.conv.modulation.weight': 0,
-        'convs.2.conv.weight': 0.2, 'convs.2.conv.modulation.weight': 0,
-        'convs.3.conv.weight': 0.2, 'convs.3.conv.modulation.weight': 0,
-        'convs.4.conv.weight': 0.2, 'convs.4.conv.modulation.weight': 0,
-        'convs.5.conv.weight': 0.2, 'convs.5.conv.modulation.weight': 0,
-        'convs.6.conv.weight': 0.2, 'convs.6.conv.modulation.weight': 0,
-        'convs.7.conv.weight': 0.2, 'convs.7.conv.modulation.weight': 0,
-        'convs.8.conv.weight': 0.2, 'convs.8.conv.modulation.weight': 0,
-        'convs.9.conv.weight': 0.2, 'convs.9.conv.modulation.weight': 0,
-        'convs.10.conv.weight': 0.2, 'convs.10.conv.modulation.weight': 0,
-        'convs.11.conv.weight': 0.2, 'convs.11.conv.modulation.weight': 0,
-        'convs.12.conv.weight': 0.2, 'convs.12.conv.modulation.weight': 0,
-        'convs.13.conv.weight': 0.2, 'convs.13.conv.modulation.weight': 0,
-        'convs.14.conv.weight': 0.2, 'convs.14.conv.modulation.weight': 0,
-        'convs.15.conv.weight': 0.2, 'convs.15.conv.modulation.weight': 0,
+        'conv1.conv.weight': 0.2,
+        'convs.0.conv.weight': 0.2,
+        'convs.1.conv.weight': 0.2,
+        'convs.2.conv.weight': 0.2,
+        'convs.3.conv.weight': 0.2,
+        'convs.4.conv.weight': 0.2,
+        'convs.5.conv.weight': 0.2,
+        'convs.6.conv.weight': 0.2,
+        'convs.7.conv.weight': 0.2,
+        'convs.8.conv.weight': 0.2,
+        'convs.9.conv.weight': 0.2,
+        'convs.10.conv.weight': 0.2,
+        'convs.11.conv.weight': 0.2,
+        'convs.12.conv.weight': 0.2,
+        'convs.13.conv.weight': 0.2,
+        'convs.14.conv.weight': 0.2,
+        'convs.15.conv.weight': 0.2,
         }
 
 
         # def plot_num_parameters_distribution(model):
         #     num_parameters = dict()
         #     for name, param in model.named_parameters():
-        #         if param.dim() > 1:
+        #         if param.dim() > 1 and param.numel() > 10:
         #             num_parameters[name] = param.numel()
         #     fig = plt.figure(figsize=(8, 6))
         #     plt.grid(axis='y')
@@ -423,15 +424,43 @@ class FaceEditor(QMainWindow):
         #     plt.show()
 
         # plot_num_parameters_distribution(self.generator)
+        # def plot_weight_distribution(model, bins=256, count_nonzero_only=False):
+        #     fig, axes = plt.subplots(3,3, figsize=(10, 6))
+        #     axes = axes.ravel()
+        #     plot_index = 0
+        #     for name, param in model.named_parameters():
+        #         if param.dim() > 1 and name in sparsity_dict.keys() and plot_index < 9:
+        #             ax = axes[plot_index]
+        #             if count_nonzero_only:
+        #                 param_cpu = param.detach().view(-1).cpu()
+        #                 param_cpu = param_cpu[param_cpu != 0].view(-1)
+        #                 ax.hist(param_cpu, bins=bins, density=True,
+        #                         color = 'blue', alpha = 0.5)
+        #             else:
+        #                 ax.hist(param.detach().view(-1).cpu(), bins=bins, density=True,
+        #                         color = 'blue', alpha = 0.5)
+        #             ax.set_xlabel(name)
+        #             ax.set_ylabel('density')
+        #             plot_index += 1
+        #     fig.suptitle('Histogram of Weights')
+        #     fig.tight_layout()
+        #     fig.subplots_adjust(top=0.925)
+        #     plt.show()
+        # plot_weight_distribution(self.generator, count_nonzero_only=True)
+        #pruner = FineGrainedPruner(self.generator, sparsity_dict)
         
-        pruner = FineGrainedPruner(self.generator, sparsity_dict)
+        # model_int8 = torch.quantization.quantize_dynamic(
+        #                     self.generator,  # the original model
+        #                     {torch.nn.Linear, StyledConv, EqualLinear, ModulatedConv2d, ToRGB, ConvLayer, ResBlock, EqualConv2d, torch.nn.functional.conv2d, torch.nn.LSTM, torch.nn.GRU},  # a set of layers to dynamically quantize
+        #                     dtype=torch.qint8)
+        # self.generator = model_int8
         # finetune_prune(5, callbacks=[lambda: pruner.apply(self.generator)])
         # for name, param in self.generator.named_parameters():
         #     print(name)
-        #self.generator = channel_prune(self.generator, prune_ratio=0.6)
-        # KMeansQuantizer(self.generator, 4)
+        #self.generator = channel_prune(self.generator, prune_ratio=0.1)
+        #KMeansQuantizer(self.generator, 4)
         print(get_model_size(self.generator, count_nonzero_only=True))
-        
+        # plot_weight_distribution(self.generator, count_nonzero_only=True)
         self.generator.eval()
         self.mean_latent = self.generator.mean_style(10000)
 
